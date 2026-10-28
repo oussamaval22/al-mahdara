@@ -1,0 +1,670 @@
+==== src/screens/AudioScreen.tsx
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, Pressable, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import { quran } from '../data/quranData';
+import { AudioItem } from '../data/quranTypes';
+import { colors, shadow } from '../theme/colors';
+
+function PickerModal({ visible, items, selected, onSelect, onClose, title }: {visible:boolean;items:string[];selected:string;onSelect:(v:string)=>void;onClose:()=>void;title:string}) {
+  return <Modal transparent visible={visible} animationType="slide" onRequestClose={onClose}><Pressable style={m.overlay} onPress={onClose}/><View style={m.sheet}><View style={m.handle}/><Text style={m.title}>{title}</Text><FlatList data={items} keyExtractor={x=>x} renderItem={({item})=><TouchableOpacity style={[m.item,item===selected&&m.selected]} onPress={()=>{onSelect(item);onClose();}}><Text style={[m.itemText,item===selected&&m.selectedText]}>{item}</Text>{item===selected&&<Ionicons name="checkmark" size={20} color={colors.green}/>}</TouchableOpacity>}/></View></Modal>;
+}
+
+export default function AudioScreen() {
+  const [surahIdx,setSurahIdx]=useState(0); const [reciter,setReciter]=useState(''); const [rewaya,setRewaya]=useState(''); const [modal,setModal]=useState<'surah'|'reciter'|'rewaya'|null>(null);
+  const surah=quran[surahIdx]; const audios=surah?.audio ?? [];
+  const reciters=useMemo(()=>Array.from(new Set(audios.map(a=>a.reciter.ar))),[audios]);
+  const rewayas=useMemo(()=>Array.from(new Set(audios.filter(a=>!reciter||a.reciter.ar===reciter).map(a=>a.rewaya.ar))),[audios,reciter]);
+  const selected=useMemo<AudioItem|null>(()=>audios.find(a=>a.reciter.ar===reciter&&(!rewaya||a.rewaya.ar===rewaya)) ?? audios[0] ?? null,[audios,reciter,rewaya]);
+  const player=useAudioPlayer(selected?.link ?? null,{updateInterval:500}); const status=useAudioPlayerStatus(player);
+
+  const canUseNativeBackgroundAudio = Constants.executionEnvironment !== ExecutionEnvironment.StoreClient;
+
+  useEffect(()=>{
+    setAudioModeAsync({
+      playsInSilentMode:true,
+      shouldPlayInBackground:canUseNativeBackgroundAudio,
+      interruptionMode:'doNotMix'
+    }).catch(()=>{});
+  },[canUseNativeBackgroundAudio]);
+  useEffect(()=>{const first=audios[0]; if(first){setReciter(first.reciter.ar);setRewaya(first.rewaya.ar);}},[surahIdx]);
+  useEffect(()=>{ if(reciter&&!rewayas.includes(rewaya)) setRewaya(rewayas[0] ?? ''); },[reciter,rewayas]);
+
+  const play=()=>{
+    if(!selected?.link){
+      Alert.alert('تنبيه','لا يوجد رابط صوت لهذه التلاوة.');
+      return;
+    }
+    // Expo Go لا يملك خدمة AudioControlsService الخاصة بالتطبيق المخصص،
+    // لذلك لا نستدعي lock-screen controls داخله. في EAS/Standalone تعمل تلقائياً.
+    if (canUseNativeBackgroundAudio) {
+      try {
+        player.setActiveForLockScreen?.(true,{
+          title:surah?.name.ar ?? 'القرآن الكريم',
+          artist:selected.reciter.ar,
+          albumTitle:selected.rewaya.ar
+        });
+      } catch {}
+    }
+    player.play();
+  };
+  const format=(n:number)=>`${Math.floor(n/60)}:${Math.floor(n%60).toString().padStart(2,'0')}`;
+  const progress=status.duration>0?Math.min(1,status.currentTime/status.duration):0;
+  const next=()=>setSurahIdx(i=>Math.min(quran.length-1,i+1)); const prev=()=>setSurahIdx(i=>Math.max(0,i-1));
+  const items=modal==='surah'?quran.map(s=>`${s.number}. ${s.name.ar}`):modal==='reciter'?reciters:rewayas;
+  const selectedItem=modal==='surah'?`${surah?.number}. ${surah?.name.ar}`:modal==='reciter'?reciter:rewaya;
+  return <SafeAreaView style={s.safe} edges={['bottom']}>
+    <View style={s.content}>
+      <View style={s.selectRow}><Select title="السورة" value={surah?.name.ar ?? '—'} onPress={()=>setModal('surah')}/><Select title="القارئ" value={reciter||'—'} onPress={()=>setModal('reciter')}/><Select title="الرواية" value={rewaya||'—'} onPress={()=>setModal('rewaya')}/></View>
+      <LinearGradient colors={[colors.greenDark,colors.green]} start={{x:0,y:0}} end={{x:1,y:1}} style={s.player}>
+        <View style={s.headphone}><Ionicons name="headset-outline" size={30} color={colors.gold}/></View><Text style={s.surah}>{surah?.name.ar}</Text><Text style={s.reciter}>{selected?.reciter.ar||'—'}</Text><Text style={s.rewaya}>{selected?.rewaya.ar||'—'}</Text>
+        <View style={s.progress}><View style={s.track}><View style={[s.fill,{width:`${progress*100}%`}]}/></View><View style={s.times}><Text style={s.time}>{format(status.currentTime||0)}</Text><Text style={s.time}>{format(status.duration||0)}</Text></View></View>
+        <View style={s.controls}><TouchableOpacity style={s.control} onPress={prev}><Ionicons name="play-skip-back" size={22} color={colors.white}/></TouchableOpacity><TouchableOpacity style={s.play} onPress={()=>status.playing?player.pause():play()}><Ionicons name={status.playing?'pause':'play'} size={30} color={colors.greenDark}/></TouchableOpacity><TouchableOpacity style={s.control} onPress={next}><Ionicons name="play-skip-forward" size={22} color={colors.white}/></TouchableOpacity></View>
+      </LinearGradient>
+      <View style={s.info}><Text style={s.infoText}>{surah?.revelation_place.ar}</Text><Text style={s.infoText}>{surah?.verses_count} آية</Text></View>
+    </View>
+    <PickerModal visible={modal!==null} items={items} selected={selectedItem} onSelect={v=>{if(modal==='surah'){const i=items.indexOf(v);if(i>=0)setSurahIdx(i);}else if(modal==='reciter'){setReciter(v)}else setRewaya(v)}} onClose={()=>setModal(null)} title={modal==='surah'?'اختر السورة':modal==='reciter'?'اختر القارئ':'اختر الرواية'}/>
+  </SafeAreaView>;
+}
+function Select({title,value,onPress}:{title:string;value:string;onPress:()=>void}){return <TouchableOpacity style={s.select} onPress={onPress}><Text style={s.selectTitle}>{title}</Text><Text style={s.selectValue} numberOfLines={1}>{value}</Text><Ionicons name="chevron-down" size={16} color={colors.muted}/></TouchableOpacity>}
+const s=StyleSheet.create({safe:{flex:1,backgroundColor:colors.bg},content:{padding:16},selectRow:{gap:9},select:{minHeight:60,borderRadius:17,backgroundColor:colors.surface,paddingHorizontal:14,paddingVertical:10,...shadow.soft},selectTitle:{fontSize:11,color:colors.muted,textAlign:'right'},selectValue:{fontSize:15,fontWeight:'800',color:colors.ink,textAlign:'right',marginTop:3,paddingRight:22},player:{marginTop:14,borderRadius:30,padding:24,alignItems:'center',...shadow.card},headphone:{width:62,height:62,borderRadius:31,backgroundColor:'rgba(255,255,255,.1)',alignItems:'center',justifyContent:'center',marginBottom:10},surah:{fontSize:29,fontWeight:'900',color:colors.white},reciter:{fontSize:15,color:'#DCEDE5',marginTop:5},rewaya:{fontSize:12,color:'#AFC8BD',marginTop:2},progress:{width:'100%',marginTop:22},track:{height:5,borderRadius:3,backgroundColor:'rgba(255,255,255,.22)',overflow:'hidden'},fill:{height:5,borderRadius:3,backgroundColor:colors.gold},times:{flexDirection:'row',justifyContent:'space-between',marginTop:6},time:{fontSize:11,color:'#BFD2C9'},controls:{flexDirection:'row',alignItems:'center',gap:20,marginTop:20},control:{width:45,height:45,borderRadius:23,backgroundColor:'rgba(255,255,255,.11)',alignItems:'center',justifyContent:'center'},play:{width:66,height:66,borderRadius:33,backgroundColor:colors.gold,alignItems:'center',justifyContent:'center'},info:{flexDirection:'row',justifyContent:'center',gap:10,marginTop:12},infoText:{backgroundColor:colors.surface,color:colors.ink,borderRadius:20,paddingHorizontal:14,paddingVertical:8,fontSize:12,fontWeight:'800',overflow:'hidden'},});
+const m=StyleSheet.create({overlay:{flex:1,backgroundColor:'rgba(0,0,0,.45)'},sheet:{position:'absolute',left:0,right:0,bottom:0,maxHeight:'75%',backgroundColor:colors.surface,borderTopLeftRadius:28,borderTopRightRadius:28,paddingBottom:24},handle:{width:42,height:4,borderRadius:2,backgroundColor:colors.border,alignSelf:'center',marginTop:10},title:{fontSize:19,fontWeight:'900',color:colors.ink,textAlign:'right',padding:18},item:{minHeight:52,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:20,borderTopWidth:1,borderTopColor:colors.border},selected:{backgroundColor:colors.greenSoft},itemText:{flex:1,textAlign:'right',fontSize:15,color:colors.ink},selectedText:{color:colors.green,fontWeight:'900'}});
+==== src/screens/BookmarksScreen.tsx
+import React, { useCallback, useState } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { colors, shadow } from '../theme/colors';
+import { Bookmark } from '../data/quranTypes';
+import { quran } from '../data/quranData';
+import { getBookmarks, removeBookmark } from '../storage/bookmarkStorage';
+import { getPageBookmarks, removePageBookmark, PageBookmark } from '../storage/pageBookmarkStorage';
+
+export default function BookmarksScreen({ navigation }: any) {
+  const [surahs, setSurahs] = useState<Bookmark[]>([]);
+  const [pages, setPages] = useState<PageBookmark[]>([]);
+
+  const load = useCallback(async () => {
+    const [savedSurahs, savedPages] = await Promise.all([getBookmarks(), getPageBookmarks()]);
+    setSurahs(savedSurahs.sort((a, b) => b.savedAt - a.savedAt));
+    setPages(savedPages.sort((a, b) => b.savedAt - a.savedAt));
+  }, []);
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const onRemoveSurah = (num: number, name: string) => {
+    Alert.alert('حذف المحفوظة', `هل تريد حذف سورة "${name}" من المحفوظات؟`, [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'حذف', style: 'destructive', onPress: async () => { await removeBookmark(num); load(); } },
+    ]);
+  };
+
+  const onRemovePage = (page: number) => {
+    Alert.alert('حذف الصفحة', `حذف الصفحة ${page} من المحفوظات؟`, [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'حذف', style: 'destructive', onPress: async () => { await removePageBookmark(page); load(); } },
+    ]);
+  };
+
+  const hasAny = pages.length > 0 || surahs.length > 0;
+
+  if (!hasAny) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.empty}>
+          <View style={s.emptyIcon}><Ionicons name="bookmark-outline" size={46} color={colors.muted} /></View>
+          <Text style={s.emptyTitle}>لا توجد محفوظات</Text>
+          <Text style={s.emptySub}>من صفحة المصحف اضغط على الشاشة ثم اختر «حفظ الصفحة».</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={s.safe}>
+      <FlatList
+        data={pages}
+        keyExtractor={(x) => `page-${x.page}`}
+        contentContainerStyle={s.list}
+        ListHeaderComponent={pages.length > 0 ? <Text style={s.sectionTitle}>الصفحات المحفوظة</Text> : null}
+        renderItem={({ item }) => (
+          <TouchableOpacity style={s.card} onPress={() => navigation.navigate('Reader', { pageNumber: item.page })} activeOpacity={0.8}>
+            <View style={s.iconWrap}><Ionicons name="bookmark" size={20} color={colors.goldDark} /></View>
+            <View style={s.info}><Text style={s.name}>صفحة {item.page}</Text><Text style={s.meta}>فتح الصفحة في المصحف</Text></View>
+            <TouchableOpacity style={s.removeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => onRemovePage(item.page)}>
+              <Ionicons name="trash-outline" size={19} color={colors.danger} />
+            </TouchableOpacity>
+          </TouchableOpacity>
+        )}
+        ListFooterComponent={surahs.length > 0 ? (
+          <View>
+            <Text style={s.sectionTitle}>السور المحفوظة</Text>
+            {surahs.map((item) => (
+              <TouchableOpacity key={item.surahNumber} style={s.card} onPress={() => navigation.navigate('Reader', { pageNumber: quran.find((s) => s.number === item.surahNumber)?.verses[0]?.page ?? 1 })} activeOpacity={0.8}>
+                <View style={s.iconWrap}><Ionicons name="star" size={20} color={colors.gold} /></View>
+                <View style={s.info}><Text style={s.name}>{item.surahName}</Text><Text style={s.meta}>سورة رقم {item.surahNumber}</Text></View>
+                <TouchableOpacity style={s.removeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => onRemoveSurah(item.surahNumber, item.surahName)}>
+                  <Ionicons name="trash-outline" size={19} color={colors.danger} />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+      />
+    </SafeAreaView>
+  );
+}
+
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.bg },
+  list: { padding: 12, paddingBottom: 28 },
+  sectionTitle: { color: colors.ink, fontSize: 19, fontWeight: '900', textAlign: 'right', marginTop: 8, marginBottom: 10, marginHorizontal: 4 },
+  card: { minHeight: 72, backgroundColor: colors.surface, borderRadius: 18, marginBottom: 9, paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', ...shadow.soft },
+  iconWrap: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FBF1DC', alignItems: 'center', justifyContent: 'center' },
+  info: { flex: 1, alignItems: 'flex-end', marginHorizontal: 12 },
+  name: { fontSize: 18, fontWeight: '800', color: colors.ink },
+  meta: { fontSize: 12, color: colors.muted, marginTop: 3 },
+  removeBtn: { padding: 6 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 36 },
+  emptyIcon: { width: 80, height: 80, borderRadius: 40, backgroundColor: colors.greenSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: colors.ink, marginBottom: 8 },
+  emptySub: { fontSize: 13, color: colors.muted, textAlign: 'center', lineHeight: 22 },
+});
+==== src/screens/HomeScreen.tsx
+import React from 'react';
+import { ScrollView, View, Text, StyleSheet, Image } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import HomeButton from '../components/HomeButton';
+import { colors, shadow } from '../theme/colors';
+
+export default function HomeScreen({ navigation }: any) {
+  return (
+    <SafeAreaView style={s.safe}>
+      <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+        <LinearGradient colors={[colors.greenDark, colors.green]} start={{x:0,y:0}} end={{x:1,y:1}} style={s.hero}>
+          <View style={s.logoRing}>
+            <Image source={require('../../assets/icon.png')} style={s.logo} resizeMode="contain" />
+          </View>
+          <Text style={s.brand}>المحظرة</Text>
+          <Text style={s.tagline}>القرآن الكريم — قراءة، استماع، ذكر</Text>
+          <View style={s.goldLine} />
+        </LinearGradient>
+
+        <Text style={s.section}>ماذا تريد أن تفعل؟</Text>
+        <View style={s.grid}>
+          <HomeButton title="فهرس القرآن" subtitle="114 سورة" icon="list-outline" onPress={() => navigation.navigate('Index')} />
+          <HomeButton title="قراءة المصحف" subtitle="صفحات المصحف" icon="book-outline" onPress={() => navigation.navigate('Reader', { pageNumber: 1 })} gold />
+          <HomeButton title="الاستماع" subtitle="القارئ والرواية" icon="headset-outline" onPress={() => navigation.navigate('Audio')} />
+          <HomeButton title="المحفوظات" subtitle="سورك المحفوظة" icon="bookmark-outline" onPress={() => navigation.navigate('Bookmarks')} gold />
+          <HomeButton title="المسبحة" subtitle="عداد التسبيح" icon="radio-button-on-outline" onPress={() => navigation.navigate('Tasbih')} />
+          <HomeButton title="الاستفسار" subtitle="معلومات التطبيق" icon="information-circle-outline" onPress={() => navigation.navigate('Inquiry')} gold />
+        </View>
+
+        <View style={s.footer}><Text style={s.bismillah}>بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</Text></View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.bg },
+  content: { padding: 16, paddingBottom: 32 },
+  hero: { borderRadius: 32, paddingVertical: 26, alignItems: 'center', marginBottom: 20, ...shadow.card },
+  logoRing: { width: 110, height: 110, borderRadius: 55, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 2, borderColor: 'rgba(215,184,77,0.7)', alignItems: 'center', justifyContent: 'center' },
+  logo: { width: 96, height: 96, borderRadius: 48 },
+  brand: { marginTop: 12, color: colors.white, fontSize: 34, fontWeight: '900' },
+  tagline: { marginTop: 5, color: '#DDEDE6', fontSize: 13, textAlign: 'center' },
+  goldLine: { width: 70, height: 3, borderRadius: 2, backgroundColor: colors.gold, marginTop: 14 },
+  section: { textAlign: 'right', color: colors.ink, fontSize: 19, fontWeight: '900', marginBottom: 8 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
+  footer: { alignItems: 'center', marginTop: 14 },
+  bismillah: { color: colors.goldDark, fontSize: 15, fontWeight: '700' },
+});
+==== src/screens/IndexScreen.tsx
+import React, { useCallback, useState } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { quran } from '../data/quranData';
+import { colors, shadow } from '../theme/colors';
+import { getBookmarks, toggleBookmark } from '../storage/bookmarkStorage';
+
+export default function IndexScreen({ navigation }: any) {
+  const [query, setQuery] = useState('');
+  const [saved, setSaved] = useState<Set<number>>(new Set());
+  const refresh = useCallback(async () => setSaved(new Set((await getBookmarks()).map(x => x.surahNumber))), []);
+  useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
+  const data = quran.filter(s => !query.trim() || s.name.ar.includes(query.trim()) || String(s.number) === query.trim());
+
+  return <SafeAreaView style={s.safe} edges={['bottom']}>
+    <View style={s.search}>
+      <Ionicons name="search-outline" size={20} color={colors.muted} />
+      <TextInput value={query} onChangeText={setQuery} placeholder="ابحث باسم السورة أو رقمها" placeholderTextColor={colors.muted} style={s.input} textAlign="right" />
+    </View>
+    <FlatList data={data} keyExtractor={x => String(x.number)} contentContainerStyle={s.list} renderItem={({item}) => {
+      const isSaved = saved.has(item.number);
+      return <TouchableOpacity style={s.card} activeOpacity={0.84} onPress={() => navigation.navigate('Reader', { pageNumber: item.verses[0]?.page ?? 1 })}>
+        <View style={s.number}><Text style={s.numberText}>{item.number}</Text></View>
+        <View style={s.info}><Text style={s.name}>{item.name.ar}</Text><Text style={s.meta}>{item.revelation_place.ar} • {item.verses_count} آية</Text></View>
+        <TouchableOpacity style={s.bookmark} onPress={async () => { await toggleBookmark(item.number, item.name.ar); refresh(); }}><Ionicons name={isSaved ? 'bookmark' : 'bookmark-outline'} size={22} color={isSaved ? colors.goldDark : colors.muted} /></TouchableOpacity>
+      </TouchableOpacity>;
+    }} />
+  </SafeAreaView>;
+}
+const s = StyleSheet.create({
+  safe:{flex:1,backgroundColor:colors.bg}, search:{margin:14,marginBottom:6,height:52,borderRadius:18,backgroundColor:colors.surface,flexDirection:'row',alignItems:'center',paddingHorizontal:14,...shadow.soft}, input:{flex:1,color:colors.ink,fontSize:15,marginLeft:8}, list:{padding:14,paddingTop:6}, card:{minHeight:78,borderRadius:20,backgroundColor:colors.surface,marginBottom:10,padding:12,flexDirection:'row',alignItems:'center',...shadow.soft}, number:{width:48,height:48,borderRadius:17,backgroundColor:colors.greenSoft,alignItems:'center',justifyContent:'center'}, numberText:{color:colors.green,fontWeight:'900',fontSize:16}, info:{flex:1,alignItems:'flex-end',marginHorizontal:12}, name:{color:colors.ink,fontSize:21,fontWeight:'900'},meta:{color:colors.muted,fontSize:12,marginTop:4},bookmark:{padding:5}
+});
+==== src/screens/InquiryScreen.tsx
+import React,{useState} from 'react';
+import {View,Text,StyleSheet,TouchableOpacity,Modal,TextInput,Alert,Linking} from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import {colors,shadow} from '../theme/colors';
+
+const PRIVATE_PASSWORD='123456';
+export default function InquiryScreen(){const [show,setShow]=useState(false);const [password,setPassword]=useState('');const check=()=>{if(password===PRIVATE_PASSWORD)Alert.alert('خاص','تم الدخول بنجاح');else Alert.alert('خطأ','الكلمة السرية غير صحيحة');setPassword('');setShow(false);};return <View style={s.safe}><View style={s.hero}><Ionicons name="information-circle-outline" size={34} color={colors.gold}/><Text style={s.title}>عن المحظرة</Text><Text style={s.sub}>تطبيق قرآن عربي بسيط وهادئ</Text></View><View style={s.card}><Row icon="person-outline" label="اسم المبرمج" value="إبراهيم فال محمد فال"/><Row icon="call-outline" label="رقم الهاتف" value="30534808" onPress={()=>Linking.openURL('tel:30534808')}/><Row icon="mail-outline" label="البريد الإلكتروني" value="oussamaval22@gmail.com" onPress={()=>Linking.openURL('mailto:oussamaval22@gmail.com')}/></View><TouchableOpacity style={s.private} onPress={()=>setShow(true)}><Ionicons name="lock-closed-outline" size={16} color={colors.muted}/><Text style={s.privateText}>خاص</Text></TouchableOpacity><Modal transparent visible={show} animationType="fade" onRequestClose={()=>setShow(false)}><View style={s.overlay}><View style={s.modal}><Text style={s.modalTitle}>أدخل الكلمة السرية</Text><TextInput value={password} onChangeText={setPassword} secureTextEntry textAlign="right" placeholder="الكلمة السرية" placeholderTextColor={colors.muted} style={s.input}/><TouchableOpacity style={s.login} onPress={check}><Text style={s.loginText}>دخول</Text></TouchableOpacity><TouchableOpacity onPress={()=>setShow(false)}><Text style={s.cancel}>إلغاء</Text></TouchableOpacity></View></View></Modal></View>}
+function Row({icon,label,value,onPress}:{icon:any;label:string;value:string;onPress?:()=>void}){return <TouchableOpacity disabled={!onPress} onPress={onPress} style={s.row}><Ionicons name={icon} size={21} color={colors.green}/><View style={s.rowText}><Text style={s.label}>{label}</Text><Text style={s.value}>{value}</Text></View></TouchableOpacity>}
+const s=StyleSheet.create({safe:{flex:1,backgroundColor:colors.bg,padding:18},hero:{backgroundColor:colors.greenDark,borderRadius:28,padding:26,alignItems:'center',...shadow.card},title:{color:colors.white,fontSize:28,fontWeight:'900',marginTop:8},sub:{color:'#CDE0D7',fontSize:12,marginTop:4},card:{marginTop:16,borderRadius:24,backgroundColor:colors.surface,padding:20,...shadow.soft},row:{flexDirection:'row',alignItems:'center',paddingVertical:12,borderBottomWidth:1,borderBottomColor:colors.border},rowText:{flex:1,alignItems:'flex-end',marginLeft:12},label:{color:colors.muted,fontSize:12},value:{color:colors.ink,fontSize:16,fontWeight:'800',marginTop:3},private:{position:'absolute',bottom:22,alignSelf:'center',flexDirection:'row',alignItems:'center',gap:6},privateText:{color:colors.muted,fontSize:13},overlay:{flex:1,backgroundColor:'rgba(0,0,0,.55)',justifyContent:'center',padding:24},modal:{backgroundColor:colors.surface,borderRadius:24,padding:22},modalTitle:{textAlign:'center',fontSize:20,fontWeight:'900',color:colors.ink,marginBottom:16},input:{borderWidth:1,borderColor:colors.border,borderRadius:14,padding:13,color:colors.ink},login:{marginTop:12,borderRadius:14,backgroundColor:colors.greenDark,padding:14,alignItems:'center'},loginText:{color:colors.white,fontWeight:'900'},cancel:{textAlign:'center',color:colors.danger,marginTop:14,fontWeight:'700'}});
+==== src/screens/ReaderScreen.tsx
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Dimensions,
+  FlatList,
+  Image,
+  TouchableOpacity,
+  Pressable,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { quran, quranPages } from '../data/quranData';
+import { quranImages } from '../data/quranImages';
+import { colors, shadow } from '../theme/colors';
+import { isPageBookmarked, togglePageBookmark } from '../storage/pageBookmarkStorage';
+
+const { width } = Dimensions.get('window');
+const PAGE_COUNT = quranPages.length;
+
+function pageSurahs(page: number) {
+  return quran.filter((s) => s.verses.some((v) => v.page === page));
+}
+
+function TextFallback({ page }: { page: number }) {
+  const surahs = pageSurahs(page);
+  return (
+    <View style={s.fallback}>
+      <Text style={s.fallbackTitle}>صفحة {page}</Text>
+      {surahs.length === 0 ? (
+        <Text style={s.fallbackMuted}>
+          ضع صور المصحف داخل assets/quran_image ثم شغّل generate:quran-images.
+        </Text>
+      ) : (
+        surahs.map((surah) => (
+          <View key={surah.number} style={s.surahBlock}>
+            <Text style={s.surahTitle}>{surah.name.ar}</Text>
+            <Text style={s.arabic}>
+              {surah.verses.filter((v) => v.page === page).map((v) => `${v.text.ar} ﴿${v.number}﴾`).join(' ')}
+            </Text>
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+export default function ReaderScreen({ route, navigation }: any) {
+  const requested = Number(route.params?.pageNumber ?? 1);
+  const initial = Math.min(PAGE_COUNT, Math.max(1, requested));
+  const [page, setPage] = useState(initial);
+  const [controlsVisible, setControlsVisible] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const ref = useRef<FlatList<number>>(null);
+  const data = useMemo(() => quranPages.map((p) => p.page), []);
+
+  useEffect(() => {
+    isPageBookmarked(initial).then(setSaved);
+  }, [initial]);
+
+  useEffect(() => {
+    isPageBookmarked(page).then(setSaved);
+  }, [page]);
+
+  const jump = (target: number) => {
+    const p = Math.min(PAGE_COUNT, Math.max(1, target));
+    setPage(p);
+    ref.current?.scrollToIndex({ index: p - 1, animated: false });
+  };
+
+  const toggleSave = async () => {
+    const value = await togglePageBookmark(page);
+    setSaved(value);
+  };
+
+  return (
+    <SafeAreaView style={s.safe} edges={['bottom']}>
+      <View style={s.topbar}>
+        <TouchableOpacity onPress={() => jump(page - 1)} disabled={page === 1} style={s.nav}>
+          <Ionicons name="chevron-back" size={22} color={page === 1 ? colors.border : colors.green} />
+        </TouchableOpacity>
+        <View style={s.pageBadge}>
+          <Text style={s.pageText}>صفحة {page} / {PAGE_COUNT}</Text>
+        </View>
+        <TouchableOpacity onPress={() => jump(page + 1)} disabled={page === PAGE_COUNT} style={s.nav}>
+          <Ionicons name="chevron-forward" size={22} color={page === PAGE_COUNT ? colors.border : colors.green} />
+        </TouchableOpacity>
+      </View>
+
+      <FlatList
+        ref={ref}
+        data={data}
+        horizontal
+        pagingEnabled
+        inverted
+        initialScrollIndex={initial - 1}
+        showsHorizontalScrollIndicator={false}
+        keyExtractor={(x) => String(x)}
+        getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+        onMomentumScrollEnd={(e) => {
+          const index = Math.round(e.nativeEvent.contentOffset.x / width);
+          const p = Math.min(PAGE_COUNT, Math.max(1, PAGE_COUNT - index));
+          setPage(p);
+        }}
+        renderItem={({ item }) => (
+          <Pressable style={s.page} onPress={() => setControlsVisible((v) => !v)}>
+            <View style={s.frame}>
+              {quranImages[item] ? (
+                <Image source={quranImages[item]} style={s.mushaf} resizeMode="contain" />
+              ) : (
+                <TextFallback page={item} />
+              )}
+            </View>
+          </Pressable>
+        )}
+      />
+
+      {controlsVisible && (
+        <View style={s.bottomBar}>
+          <ActionButton
+            icon={saved ? 'bookmark' : 'bookmark-outline'}
+            label={saved ? 'محفوظة' : 'حفظ الصفحة'}
+            active={saved}
+            onPress={toggleSave}
+          />
+          <ActionButton
+            icon="list-outline"
+            label="الفهرس"
+            onPress={() => navigation.navigate('Index')}
+          />
+          <ActionButton
+            icon="headset-outline"
+            label="الاستماع"
+            onPress={() => navigation.navigate('Audio')}
+          />
+        </View>
+      )}
+    </SafeAreaView>
+  );
+}
+
+function ActionButton({
+  icon,
+  label,
+  onPress,
+  active = false,
+}: {
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  label: string;
+  onPress: () => void;
+  active?: boolean;
+}) {
+  return (
+    <TouchableOpacity style={s.action} onPress={onPress} activeOpacity={0.8}>
+      <View style={[s.actionIcon, active && s.actionIconActive]}>
+        <Ionicons name={icon} size={22} color={active ? colors.goldDark : colors.green} />
+      </View>
+      <Text style={s.actionLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#DED5C2' },
+  topbar: { height: 54, backgroundColor: colors.greenDark, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12 },
+  pageBadge: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.1)' },
+  pageText: { color: colors.white, fontWeight: '800', fontSize: 13 },
+  nav: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  page: { width, flex: 1, padding: 8 },
+  frame: { flex: 1, backgroundColor: '#F7F0DE', borderRadius: 8, overflow: 'hidden', ...shadow.soft },
+  mushaf: { width: '100%', height: '100%' },
+  fallback: { flex: 1, padding: 20, justifyContent: 'center' },
+  fallbackTitle: { fontSize: 22, fontWeight: '900', color: colors.green, textAlign: 'center', marginBottom: 16 },
+  fallbackMuted: { fontSize: 14, color: colors.muted, textAlign: 'center', lineHeight: 25 },
+  surahBlock: { marginBottom: 20 },
+  surahTitle: { fontSize: 20, fontWeight: '900', color: colors.goldDark, textAlign: 'center', marginBottom: 8 },
+  arabic: { fontSize: 19, lineHeight: 40, color: colors.ink, textAlign: 'right', writingDirection: 'rtl' },
+  bottomBar: { position: 'absolute', left: 14, right: 14, bottom: 14, minHeight: 82, borderRadius: 24, backgroundColor: 'rgba(255,253,247,0.97)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 10, paddingVertical: 9, ...shadow.card },
+  action: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  actionIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: colors.greenSoft, alignItems: 'center', justifyContent: 'center' },
+  actionIconActive: { backgroundColor: '#F6EFCF' },
+  actionLabel: { color: colors.ink, fontSize: 11, fontWeight: '800', marginTop: 5, textAlign: 'center' },
+});
+==== src/screens/TasbihScreen.tsx
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Haptics from 'expo-haptics';
+import { getTasbihCount, saveTasbihCount, resetTasbih } from '../storage/tasbihStorage';
+import { colors, shadow } from '../theme/colors';
+
+export default function TasbihScreen(){const [count,setCount]=useState(0);useEffect(()=>{getTasbihCount().then(setCount);},[]);const add=async()=>{const n=count+1;setCount(n);await saveTasbihCount(n);await Haptics.selectionAsync().catch(()=>{});};const reset=async()=>{setCount(0);await resetTasbih();await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(()=>{});};return <View style={s.safe}><View style={s.icon}><Ionicons name="radio-button-on-outline" size={28} color={colors.green}/></View><Text style={s.title}>المسبحة</Text><Text style={s.subtitle}>عداد الذكر محفوظ تلقائيًا</Text><View style={s.counter}><Text style={s.count}>{count}</Text></View><TouchableOpacity style={s.big} activeOpacity={.88} onPress={add}><Ionicons name="add" size={42} color={colors.white}/><Text style={s.bigText}>تسبيح</Text></TouchableOpacity><TouchableOpacity style={s.reset} onPress={reset}><Ionicons name="refresh-outline" size={18} color={colors.danger}/><Text style={s.resetText}>تصفير</Text></TouchableOpacity></View>}
+const s=StyleSheet.create({safe:{flex:1,backgroundColor:colors.bg,alignItems:'center',paddingTop:30},icon:{width:58,height:58,borderRadius:20,backgroundColor:colors.greenSoft,alignItems:'center',justifyContent:'center'},title:{fontSize:28,fontWeight:'900',color:colors.green,marginTop:10},subtitle:{fontSize:12,color:colors.muted,marginTop:3},counter:{width:180,height:180,borderRadius:90,backgroundColor:colors.surface,alignItems:'center',justifyContent:'center',marginTop:28,marginBottom:24,...shadow.card},count:{fontSize:58,fontWeight:'900',color:colors.ink},big:{width:210,height:210,borderRadius:105,backgroundColor:colors.greenDark,alignItems:'center',justifyContent:'center',...shadow.card},bigText:{fontSize:24,fontWeight:'900',color:colors.white,marginTop:2},reset:{marginTop:22,flexDirection:'row',alignItems:'center',gap:7,paddingHorizontal:24,paddingVertical:12,borderRadius:24,backgroundColor:colors.surface,...shadow.soft},resetText:{color:colors.danger,fontWeight:'900',fontSize:15}});
+==== src/data/pageTypes.ts
+export type QuranPage = {
+  page: number;
+  image: { url: string };
+  start: { surah_number: number; verse: number; name: { ar: string } };
+  end: { surah_number: number; verse: number; name: { ar: string } };
+};
+==== src/data/quranData.ts
+import raw from '../../data/mainDataQuran.json';
+import pagesRaw from '../../data/pagesQuran.json';
+import { QuranSurah } from './quranTypes';
+import { QuranPage } from './pageTypes';
+export const quran = raw as QuranSurah[];
+export const quranPages = pagesRaw as QuranPage[];
+==== src/data/quranImages.ts
+// AUTO-GENERATED FILE. Do not edit manually.
+export const quranImages: Record<number, number> = {
+};
+==== src/data/quranTypes.ts
+export type Verse = {
+  number: number;
+  text: { ar: string; [key: string]: unknown };
+  juz?: number;
+  page?: number;
+  sajda?: boolean;
+};
+
+export type AudioItem = {
+  id: number;
+  reciter: { ar: string; [key: string]: unknown };
+  rewaya: { ar: string; [key: string]: unknown };
+  link: string;
+  server?: string;
+};
+
+export type QuranSurah = {
+  number: number;
+  name: { ar: string; [key: string]: unknown };
+  revelation_place: { ar: string; [key: string]: unknown };
+  verses_count: number;
+  words_count?: number;
+  letters_count?: number;
+  verses: Verse[];
+  audio: AudioItem[];
+};
+
+export type Bookmark = { surahNumber: number; surahName: string; savedAt: number };
+==== src/storage/bookmarkStorage.ts
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Bookmark } from '../data/quranTypes';
+
+const KEY = '@al_muhadhara_bookmarks';
+
+export async function getBookmarks(): Promise<Bookmark[]> {
+  const raw = await AsyncStorage.getItem(KEY);
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw) as Bookmark[];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function isBookmarked(surahNumber: number): Promise<boolean> {
+  const list = await getBookmarks();
+  return list.some((b) => b.surahNumber === surahNumber);
+}
+
+export async function toggleBookmark(surahNumber: number, surahName: string): Promise<boolean> {
+  const list = await getBookmarks();
+  const exists = list.some((b) => b.surahNumber === surahNumber);
+  let next: Bookmark[];
+  if (exists) {
+    next = list.filter((b) => b.surahNumber !== surahNumber);
+  } else {
+    next = [{ surahNumber, surahName, savedAt: Date.now() }, ...list];
+  }
+  await AsyncStorage.setItem(KEY, JSON.stringify(next));
+  return !exists;
+}
+
+export async function removeBookmark(surahNumber: number): Promise<void> {
+  const list = await getBookmarks();
+  const next = list.filter((b) => b.surahNumber !== surahNumber);
+  await AsyncStorage.setItem(KEY, JSON.stringify(next));
+}
+==== src/storage/pageBookmarkStorage.ts
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export type PageBookmark = {
+  page: number;
+  savedAt: number;
+};
+
+const KEY = '@al_muhadhara_page_bookmarks';
+
+export async function getPageBookmarks(): Promise<PageBookmark[]> {
+  const raw = await AsyncStorage.getItem(KEY);
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw) as PageBookmark[];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function isPageBookmarked(page: number): Promise<boolean> {
+  const list = await getPageBookmarks();
+  return list.some((item) => item.page === page);
+}
+
+export async function togglePageBookmark(page: number): Promise<boolean> {
+  const list = await getPageBookmarks();
+  const exists = list.some((item) => item.page === page);
+  const next = exists
+    ? list.filter((item) => item.page !== page)
+    : [{ page, savedAt: Date.now() }, ...list];
+  await AsyncStorage.setItem(KEY, JSON.stringify(next));
+  return !exists;
+}
+
+export async function removePageBookmark(page: number): Promise<void> {
+  const list = await getPageBookmarks();
+  await AsyncStorage.setItem(KEY, JSON.stringify(list.filter((item) => item.page !== page)));
+}
+==== src/storage/tasbihStorage.ts
+import AsyncStorage from '@react-native-async-storage/async-storage';
+const KEY='@al_muhadhara_tasbih';
+export async function getTasbihCount(){const v=await AsyncStorage.getItem(KEY);return v===null?0:Number(v)||0;}
+export async function saveTasbihCount(n:number){await AsyncStorage.setItem(KEY,String(n));}
+export async function resetTasbih(){await AsyncStorage.setItem(KEY,'0');}
+==== src/components/HomeButton.tsx
+import React from 'react';
+import { Text, TouchableOpacity, StyleSheet, View } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { colors, shadow } from '../theme/colors';
+
+type Props = {
+  title: string;
+  subtitle: string;
+  icon: any;
+  onPress: () => void;
+  gold?: boolean;
+};
+
+export default function HomeButton({ title, subtitle, icon, onPress, gold }: Props) {
+  return (
+    <TouchableOpacity activeOpacity={0.86} onPress={onPress} style={s.card}>
+      <View style={[s.icon, gold && s.iconGold]}>
+        <Ionicons name={icon} size={28} color={gold ? colors.goldDark : colors.green} />
+      </View>
+      <Text style={s.title}>{title}</Text>
+      <Text style={s.subtitle}>{subtitle}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const s = StyleSheet.create({
+  card: {
+    width: '47%', minHeight: 142, backgroundColor: colors.surface, borderRadius: 24,
+    padding: 16, margin: '1.5%', alignItems: 'center', justifyContent: 'center', ...shadow.soft,
+  },
+  icon: { width: 60, height: 60, borderRadius: 20, backgroundColor: colors.greenSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+  iconGold: { backgroundColor: '#F6EFCF' },
+  title: { color: colors.ink, fontSize: 17, fontWeight: '900', textAlign: 'center' },
+  subtitle: { color: colors.muted, fontSize: 11, marginTop: 4, textAlign: 'center' },
+});
+==== src/theme/colors.ts
+export const colors = {
+  bg: '#F4F0E6',
+  surface: '#FFFDF7',
+  green: '#0B5A43',
+  greenDark: '#062D22',
+  greenSoft: '#E5F0EA',
+  gold: '#D7B84D',
+  goldDark: '#A88724',
+  ink: '#17372D',
+  muted: '#718078',
+  border: '#E4DDCE',
+  white: '#FFFFFF',
+  black: '#111111',
+  danger: '#A52B2B',
+};
+
+export const shadow = {
+  soft: {
+    shadowColor: '#062D22',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  card: {
+    shadowColor: '#062D22',
+    shadowOffset: { width: 0, height: 7 },
+    shadowOpacity: 0.13,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+};
